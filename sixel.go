@@ -11,6 +11,7 @@ import (
 	"image/draw"
 	"io"
 	"maps"
+	"math"
 	"slices"
 )
 
@@ -30,31 +31,36 @@ func (c sixelRGB) RGBA() (r, g, b, a uint32) {
 	return scaleFFFF(c.r), scaleFFFF(c.g), scaleFFFF(c.b), 0xffff
 }
 
-func cutOnce(colors []color.RGBA) [2][]color.RGBA {
-	var minR, maxR, minG, maxG, minB, maxB uint8
+func bucketRange(colors []color.RGBA) (rRange, gRange, bRange uint8) {
+	if len(colors) == 0 {
+		return 0, 0, 0
+	}
+	var minR, minG, minB uint8 = math.MaxUint8, math.MaxUint8, math.MaxUint8
+	var maxR, maxG, maxB uint8
 	for _, c := range colors {
 		minR, maxR = min(minR, c.R), max(maxR, c.R)
 		minG, maxG = min(minG, c.G), max(maxG, c.G)
 		minB, maxB = min(minB, c.B), max(maxB, c.B)
 	}
-	rRange, gRange, bRange := maxR-minR, maxG-minG, maxB-minB
-	if rRange >= gRange && rRange >= bRange {
-		slices.SortFunc(colors, func(x, y color.RGBA) int { return cmp.Compare(x.R, y.R) })
-	} else if gRange >= rRange && gRange >= bRange {
-		slices.SortFunc(colors, func(x, y color.RGBA) int { return cmp.Compare(x.G, y.G) })
-	} else {
-		slices.SortFunc(colors, func(x, y color.RGBA) int { return cmp.Compare(x.B, y.B) })
-	}
-	return [...][]color.RGBA{colors[:len(colors)/2], colors[len(colors)/2:]}
+	return maxR - minR, maxG - minG, maxB - minB
 }
 
-func cutDepth(colors []color.RGBA, depth int) [][]color.RGBA {
-	split := cutOnce(colors)
-	depth++
-	if depth == 8 {
-		return split[:]
+func cutOnce(colors []color.RGBA) [2][]color.RGBA {
+	rRange, gRange, bRange := bucketRange(colors)
+	if rRange >= gRange && rRange >= bRange {
+		slices.SortFunc(colors, func(x, y color.RGBA) int {
+			return cmp.Or(cmp.Compare(x.R, y.R), cmp.Compare(x.G, y.G), cmp.Compare(x.B, y.B))
+		})
+	} else if gRange >= rRange && gRange >= bRange {
+		slices.SortFunc(colors, func(x, y color.RGBA) int {
+			return cmp.Or(cmp.Compare(x.G, y.G), cmp.Compare(x.R, y.R), cmp.Compare(x.B, y.B))
+		})
+	} else {
+		slices.SortFunc(colors, func(x, y color.RGBA) int {
+			return cmp.Or(cmp.Compare(x.B, y.B), cmp.Compare(x.R, y.R), cmp.Compare(x.G, y.G))
+		})
 	}
-	return append(cutDepth(split[0], depth), cutDepth(split[1], depth)...)
+	return [...][]color.RGBA{colors[:len(colors)/2], colors[len(colors)/2:]}
 }
 
 func colorAvg(colors []color.RGBA) sixelRGB {
@@ -65,19 +71,7 @@ func colorAvg(colors []color.RGBA) sixelRGB {
 		b += int64(c.B)
 	}
 	n := int64(len(colors))
-	c := sixelRGB{r: scale100(r / n), g: scale100(g / n), b: scale100(b / n)}
-	return c
-}
-
-func avgPaletteRGB(buckets [][]color.RGBA) []sixelRGB {
-	paletteRGB := make([]sixelRGB, len(buckets))
-	for i, bucket := range buckets {
-		paletteRGB[i] = colorAvg(bucket)
-	}
-	slices.SortFunc(paletteRGB, func(x, y sixelRGB) int {
-		return cmp.Or(cmp.Compare(x.r, y.r), cmp.Compare(x.g, y.g), cmp.Compare(x.b, y.b))
-	})
-	return slices.Compact(paletteRGB)
+	return sixelRGB{r: scale100(r / n), g: scale100(g / n), b: scale100(b / n)}
 }
 
 func medianCut(img image.Image) color.Palette {
@@ -90,15 +84,30 @@ func medianCut(img image.Image) color.Palette {
 			}
 		}
 	}
-	buckets := slices.DeleteFunc(cutDepth(colors, 0), func(b []color.RGBA) bool { return len(b) == 0 })
-	paletteRGB := avgPaletteRGB(buckets)
-	if len(paletteRGB) == 256 {
-		lastBucket := buckets[len(buckets)-1]
-		secondLastBucket := buckets[len(buckets)-2]
-		buckets[len(buckets)-2] = secondLastBucket[:len(secondLastBucket)+len(lastBucket)]
-		buckets = buckets[:len(buckets)-1]
-		paletteRGB = avgPaletteRGB(buckets)
+	buckets := [][]color.RGBA{colors}
+	for len(buckets) < 255 {
+		var bestRange uint8
+		var bestIdx int
+		for i, b := range buckets {
+			r := max(bucketRange(b))
+			if r >= bestRange {
+				bestRange = r
+				bestIdx = i
+			}
+		}
+		split := cutOnce(buckets[bestIdx])
+		buckets = slices.Replace(buckets, bestIdx, bestIdx+1, split[:]...)
 	}
+	var paletteRGB []sixelRGB
+	for _, bucket := range buckets {
+		if len(bucket) > 0 {
+			paletteRGB = append(paletteRGB, colorAvg(bucket))
+		}
+	}
+	slices.SortFunc(paletteRGB, func(x, y sixelRGB) int {
+		return cmp.Or(cmp.Compare(x.r, y.r), cmp.Compare(x.g, y.g), cmp.Compare(x.b, y.b))
+	})
+	paletteRGB = slices.Compact(paletteRGB)
 	palette := slices.Grow(color.Palette{color.Transparent}, len(paletteRGB))
 	for _, c := range paletteRGB {
 		palette = append(palette, c)
