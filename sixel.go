@@ -4,33 +4,118 @@ package sixel
 
 import (
 	"bufio"
+	"cmp"
 	"fmt"
 	"image"
 	"image/color"
-	"image/color/palette"
 	"image/draw"
 	"io"
 	"maps"
 	"slices"
 )
 
-func scale100(c uint32) int {
-	return int(c) * 100 / 0xffff
+func scale100(c int64) int8 {
+	return int8(c * 100 / 0xff)
 }
 
-var sixelPalette = append(color.Palette{color.Transparent}, palette.WebSafe...)
+func scaleFFFF(c int8) uint32 {
+	return uint32(c) * 0xffff / 100
+}
+
+type sixelRGB struct {
+	r, g, b int8
+}
+
+func (c sixelRGB) RGBA() (r, g, b, a uint32) {
+	return scaleFFFF(c.r), scaleFFFF(c.g), scaleFFFF(c.b), 0xffff
+}
+
+func cutOnce(colors []color.RGBA) [2][]color.RGBA {
+	var minR, maxR, minG, maxG, minB, maxB uint8
+	for _, c := range colors {
+		minR, maxR = min(minR, c.R), max(maxR, c.R)
+		minG, maxG = min(minG, c.G), max(maxG, c.G)
+		minB, maxB = min(minB, c.B), max(maxB, c.B)
+	}
+	rRange, gRange, bRange := maxR-minR, maxG-minG, maxB-minB
+	if rRange >= gRange && rRange >= bRange {
+		slices.SortFunc(colors, func(x, y color.RGBA) int { return cmp.Compare(x.R, y.R) })
+	} else if gRange >= rRange && gRange >= bRange {
+		slices.SortFunc(colors, func(x, y color.RGBA) int { return cmp.Compare(x.G, y.G) })
+	} else {
+		slices.SortFunc(colors, func(x, y color.RGBA) int { return cmp.Compare(x.B, y.B) })
+	}
+	return [...][]color.RGBA{colors[:len(colors)/2], colors[len(colors)/2:]}
+}
+
+func cutDepth(colors []color.RGBA, depth int) [][]color.RGBA {
+	split := cutOnce(colors)
+	depth++
+	if depth == 8 {
+		return split[:]
+	}
+	return append(cutDepth(split[0], depth), cutDepth(split[1], depth)...)
+}
+
+func colorAvg(colors []color.RGBA) sixelRGB {
+	var r, g, b int64
+	for _, c := range colors {
+		r += int64(c.R)
+		g += int64(c.G)
+		b += int64(c.B)
+	}
+	n := int64(len(colors))
+	c := sixelRGB{r: scale100(r / n), g: scale100(g / n), b: scale100(b / n)}
+	return c
+}
+
+func avgPaletteRGB(buckets [][]color.RGBA) []sixelRGB {
+	paletteRGB := make([]sixelRGB, len(buckets))
+	for i, bucket := range buckets {
+		paletteRGB[i] = colorAvg(bucket)
+	}
+	slices.SortFunc(paletteRGB, func(x, y sixelRGB) int {
+		return cmp.Or(cmp.Compare(x.r, y.r), cmp.Compare(x.g, y.g), cmp.Compare(x.b, y.b))
+	})
+	return slices.Compact(paletteRGB)
+}
+
+func medianCut(img image.Image) color.Palette {
+	colors := make([]color.RGBA, 0, img.Bounds().Dx()*img.Bounds().Dy())
+	for y := img.Bounds().Min.Y; y < img.Bounds().Max.Y; y++ {
+		for x := img.Bounds().Min.X; x < img.Bounds().Max.X; x++ {
+			r, g, b, a := img.At(x, y).RGBA()
+			colors = append(colors, color.RGBA{R: uint8(r >> 8), G: uint8(g >> 8), B: uint8(b >> 8), A: uint8(a >> 8)})
+		}
+	}
+	buckets := slices.DeleteFunc(cutDepth(colors, 0), func(c []color.RGBA) bool { return len(c) == 0 })
+	paletteRGB := avgPaletteRGB(buckets)
+	if len(paletteRGB) == 256 {
+		lastBucket := buckets[len(buckets)-1]
+		secondLastBucket := buckets[len(buckets)-2]
+		buckets[len(buckets)-2] = secondLastBucket[:len(secondLastBucket)+len(lastBucket)]
+		buckets = buckets[:len(buckets)-1]
+		paletteRGB = avgPaletteRGB(buckets)
+	}
+	palette := slices.Grow(color.Palette{color.Transparent}, len(paletteRGB))
+	for _, c := range paletteRGB {
+		palette = append(palette, c)
+	}
+	return palette
+}
 
 // Print renders the given image as a sixel.
 func Print(w io.Writer, img image.Image) error {
-	palettized := image.NewPaletted(img.Bounds(), sixelPalette)
+	palette := medianCut(img)
+	palettized := image.NewPaletted(img.Bounds(), palette)
 	draw.FloydSteinberg.Draw(palettized, palettized.Bounds(), img, image.Point{})
 	bw := bufio.NewWriter(w)
 	if _, err := bw.WriteString("\033P7;1q"); err != nil {
 		return err
 	}
-	for i, c := range sixelPalette[1:] {
-		r, g, b, _ := c.RGBA()
-		if _, err := fmt.Fprintf(bw, "#%d;2;%d;%d;%d", i, scale100(r), scale100(g), scale100(b)); err != nil {
+	for i, c := range palette[1:] {
+		sc := c.(sixelRGB)
+		if _, err := fmt.Fprintf(bw, "#%d;2;%d;%d;%d", i, sc.r, sc.g, sc.b); err != nil {
 			return err
 		}
 	}
