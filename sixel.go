@@ -145,11 +145,6 @@ func Print(w io.Writer, img image.Image) error {
 				}
 			}
 		}
-		if len(colors) == 0 {
-			if _, err := fmt.Fprintf(bw, "!%d?", palettized.Bounds().Dx()); err != nil {
-				return err
-			}
-		}
 		for i, c := range slices.Sorted(maps.Keys(colors)) {
 			if i > 0 {
 				if _, err := bw.WriteString("$"); err != nil {
@@ -189,7 +184,7 @@ func Print(w io.Writer, img image.Image) error {
 				lastChar = char
 				lastCharLen++
 			}
-			if lastCharLen > 0 {
+			if lastCharLen > 0 && lastChar != '?' {
 				if lastCharLen < 4 {
 					for range lastCharLen {
 						if err := bw.WriteByte(lastChar); err != nil {
