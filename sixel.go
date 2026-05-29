@@ -10,6 +10,8 @@ import (
 	"image/color/palette"
 	"image/draw"
 	"io"
+	"maps"
+	"slices"
 )
 
 func scale100(c uint32) int {
@@ -23,7 +25,7 @@ func Print(w io.Writer, img image.Image) error {
 	palettized := image.NewPaletted(img.Bounds(), sixelPalette)
 	draw.FloydSteinberg.Draw(palettized, palettized.Bounds(), img, image.Point{})
 	bw := bufio.NewWriter(w)
-	if _, err := io.WriteString(bw, "\033P7;1q"); err != nil {
+	if _, err := bw.WriteString("\033P7;1q"); err != nil {
 		return err
 	}
 	for i, c := range sixelPalette[1:] {
@@ -32,34 +34,81 @@ func Print(w io.Writer, img image.Image) error {
 			return err
 		}
 	}
-	for row := 0; row < palettized.Bounds().Dy(); row++ {
-		y := palettized.Bounds().Min.Y + row
+	for row := 0; row < palettized.Bounds().Dy(); row += 6 {
+		y0 := palettized.Bounds().Min.Y + row
 		if row > 0 {
-			if row%6 == 0 {
-				if _, err := io.WriteString(bw, "-"); err != nil {
-					return err
-				}
-			} else {
-				if _, err := io.WriteString(bw, "$"); err != nil {
-					return err
+			if _, err := bw.WriteString("-"); err != nil {
+				return err
+			}
+		}
+		colors := make(map[uint8]bool)
+		for y := y0; y <= y0+6; y++ {
+			for x := palettized.Bounds().Min.X; x < palettized.Bounds().Max.X; x++ {
+				if c := palettized.ColorIndexAt(x, y); c != 0 {
+					colors[c] = true
 				}
 			}
 		}
-		for x := palettized.Bounds().Min.X; x < palettized.Bounds().Max.X; x++ {
-			c := palettized.ColorIndexAt(x, y)
-			if c == 0 {
-				if _, err := fmt.Fprint(bw, "?"); err != nil {
+		if len(colors) == 0 {
+			if _, err := fmt.Fprintf(bw, "!%d?", palettized.Bounds().Dx()); err != nil {
+				return err
+			}
+		}
+		for i, c := range slices.Sorted(maps.Keys(colors)) {
+			if i > 0 {
+				if _, err := bw.WriteString("$"); err != nil {
 					return err
 				}
-			} else {
-				char := '?' + 1<<(row%6)
-				if _, err := fmt.Fprintf(bw, "#%d%c", c-1, char); err != nil {
-					return err
+			}
+			if _, err := fmt.Fprintf(bw, "#%d", c-1); err != nil {
+				return err
+			}
+			var (
+				lastChar    byte
+				lastCharLen int
+			)
+			for x := palettized.Bounds().Min.X; x < palettized.Bounds().Max.X; x++ {
+				var char byte
+				for j := range 6 {
+					y := y0 + j
+					if palettized.ColorIndexAt(x, y) == c {
+						char |= 1 << j
+					}
+				}
+				char += '?'
+				if lastCharLen > 0 && lastChar != char {
+					if lastCharLen < 4 {
+						for range lastCharLen {
+							if err := bw.WriteByte(lastChar); err != nil {
+								return err
+							}
+						}
+					} else {
+						if _, err := fmt.Fprintf(bw, "!%d%c", lastCharLen, lastChar); err != nil {
+							return err
+						}
+					}
+					lastCharLen = 0
+				}
+				lastChar = char
+				lastCharLen++
+			}
+			if lastCharLen > 0 {
+				if lastCharLen < 4 {
+					for range lastCharLen {
+						if err := bw.WriteByte(lastChar); err != nil {
+							return err
+						}
+					}
+				} else {
+					if _, err := fmt.Fprintf(bw, "!%d%c", lastCharLen, lastChar); err != nil {
+						return err
+					}
 				}
 			}
 		}
 	}
-	if _, err := io.WriteString(bw, "\033\\"); err != nil {
+	if _, err := bw.WriteString("\033\\"); err != nil {
 		return err
 	}
 	if err := bw.Flush(); err != nil {
@@ -80,7 +129,7 @@ func PrintBlock(w io.Writer, img image.Image) error {
 	for row := 0; row < img.Bounds().Dy(); row += 2 {
 		y := img.Bounds().Min.Y + row
 		if row > 0 {
-			if _, err := io.WriteString(bw, "\n"); err != nil {
+			if _, err := bw.WriteString("\n"); err != nil {
 				return err
 			}
 		}
@@ -88,7 +137,7 @@ func PrintBlock(w io.Writer, img image.Image) error {
 			hi := img.At(x, y)
 			if isFullyTransparent(hi) {
 				if y+1 >= img.Bounds().Max.Y || isFullyTransparent(img.At(x, y+1)) {
-					if _, err := io.WriteString(bw, "\033[49m "); err != nil {
+					if _, err := bw.WriteString("\033[49m "); err != nil {
 						return err
 					}
 				} else {
@@ -104,7 +153,7 @@ func PrintBlock(w io.Writer, img image.Image) error {
 						return err
 					}
 				} else {
-					if _, err := io.WriteString(bw, "\033[49m"); err != nil {
+					if _, err := bw.WriteString("\033[49m"); err != nil {
 						return err
 					}
 				}
@@ -114,7 +163,7 @@ func PrintBlock(w io.Writer, img image.Image) error {
 				}
 			}
 		}
-		if _, err := io.WriteString(bw, "\033[39m\033[49m"); err != nil {
+		if _, err := bw.WriteString("\033[39m\033[49m"); err != nil {
 			return err
 		}
 	}
@@ -178,14 +227,14 @@ func PrintXTerm16(w io.Writer, img image.Image) error {
 	for row := 0; row < palettized.Bounds().Dy(); row++ {
 		y := palettized.Bounds().Min.Y + row
 		if row > 0 {
-			if _, err := io.WriteString(bw, "\n"); err != nil {
+			if _, err := bw.WriteString("\n"); err != nil {
 				return err
 			}
 		}
 		for x := palettized.Bounds().Min.X; x < palettized.Bounds().Max.X; x++ {
 			c := palettized.At(x, y)
 			if c == color.Transparent {
-				if _, err := io.WriteString(bw, "\033[49m "); err != nil {
+				if _, err := bw.WriteString("\033[49m "); err != nil {
 					return err
 				}
 			} else {
@@ -194,7 +243,7 @@ func PrintXTerm16(w io.Writer, img image.Image) error {
 				}
 			}
 		}
-		if _, err := io.WriteString(bw, "\033[49m"); err != nil {
+		if _, err := bw.WriteString("\033[49m"); err != nil {
 			return err
 		}
 	}
