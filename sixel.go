@@ -4,7 +4,6 @@ package sixel
 
 import (
 	"bufio"
-	"cmp"
 	"fmt"
 	"image"
 	"image/color"
@@ -12,6 +11,7 @@ import (
 	"io"
 	"maps"
 	"math"
+	"math/rand/v2"
 	"slices"
 )
 
@@ -31,9 +31,63 @@ func (c sixelRGB) RGBA() (r, g, b, a uint32) {
 	return scaleFFFF(c.r), scaleFFFF(c.g), scaleFFFF(c.b), 0xffff
 }
 
-func bucketRange(colors []color.RGBA) (rRange, gRange, bRange uint8) {
+func lcg(state *uint64) int {
+	s := *state*6364136223846793005 + 1
+	*state = s
+	return int(s >> 33)
+}
+
+func partition(a []color.RGBA, lo, hi, pivotIndex int, cmp func(color.RGBA, color.RGBA) int) (int, int) {
+	pivot := a[pivotIndex]
+	lt := lo
+	eq := lo
+	gt := hi
+	for eq <= gt {
+		n := cmp(a[eq], pivot)
+		if n < 0 {
+			a[eq], a[lt] = a[lt], a[eq]
+			lt++
+			eq++
+		} else if n > 0 {
+			a[eq], a[gt] = a[gt], a[eq]
+			gt--
+		} else {
+			eq++
+		}
+	}
+	return lt, gt
+}
+
+func quickSelect(list []color.RGBA, k int, cmp func(color.RGBA, color.RGBA) int, randState *uint64) int {
+	left, right := 0, len(list)-1
+	for {
+		if left == right {
+			return left
+		}
+		pivotIndex := left + lcg(randState)%(right-left+1)
+		pivotLeft, pivotRight := partition(list, left, right, pivotIndex, cmp)
+		if pivotLeft <= k && k <= pivotRight {
+			return k
+		} else if k < pivotLeft {
+			right = pivotLeft - 1
+		} else {
+			left = pivotRight + 1
+		}
+	}
+}
+
+func quickCut(list []color.RGBA, cmp func(color.RGBA, color.RGBA) int, rand *uint64) int {
+	medianIndex := quickSelect(list, len(list)/2, cmp, rand)
+	partition(list, 0, len(list)-1, medianIndex, cmp)
+	return len(list) / 2
+}
+
+func bucketRange(colors []color.RGBA, bucketIdx int, rangeCache []int32) (rRange, gRange, bRange uint8) {
 	if len(colors) == 0 {
 		return 0, 0, 0
+	}
+	if cached := rangeCache[bucketIdx]; cached >= 0 {
+		return uint8(cached >> 16), uint8(cached >> 8), uint8(cached)
 	}
 	var minR, minG, minB uint8 = math.MaxUint8, math.MaxUint8, math.MaxUint8
 	var maxR, maxG, maxB uint8
@@ -42,25 +96,25 @@ func bucketRange(colors []color.RGBA) (rRange, gRange, bRange uint8) {
 		minG, maxG = min(minG, c.G), max(maxG, c.G)
 		minB, maxB = min(minB, c.B), max(maxB, c.B)
 	}
-	return maxR - minR, maxG - minG, maxB - minB
+	rRange, gRange, bRange = maxR-minR, maxG-minG, maxB-minB
+	rangeCache[bucketIdx] = int32(rRange)<<16 | int32(gRange)<<8 | int32(bRange)
+	return rRange, gRange, bRange
 }
 
-func cutOnce(colors []color.RGBA) [2][]color.RGBA {
-	rRange, gRange, bRange := bucketRange(colors)
-	if rRange >= gRange && rRange >= bRange {
-		slices.SortFunc(colors, func(x, y color.RGBA) int {
-			return cmp.Or(cmp.Compare(x.R, y.R), cmp.Compare(x.G, y.G), cmp.Compare(x.B, y.B))
-		})
-	} else if gRange >= rRange && gRange >= bRange {
-		slices.SortFunc(colors, func(x, y color.RGBA) int {
-			return cmp.Or(cmp.Compare(x.G, y.G), cmp.Compare(x.R, y.R), cmp.Compare(x.B, y.B))
-		})
-	} else {
-		slices.SortFunc(colors, func(x, y color.RGBA) int {
-			return cmp.Or(cmp.Compare(x.B, y.B), cmp.Compare(x.R, y.R), cmp.Compare(x.G, y.G))
-		})
+func cutOnce(colors []color.RGBA, bucketIdx int, rangeCache []int32, rand *uint64) [2][]color.RGBA {
+	if len(colors) == 0 {
+		return [...][]color.RGBA{colors, colors}
 	}
-	return [...][]color.RGBA{colors[:len(colors)/2], colors[len(colors)/2:]}
+	rRange, gRange, bRange := bucketRange(colors, bucketIdx, rangeCache)
+	var i int
+	if rRange >= gRange && rRange >= bRange {
+		i = quickCut(colors, func(x, y color.RGBA) int { return int(x.R) - int(y.R) }, rand)
+	} else if gRange >= rRange && gRange >= bRange {
+		i = quickCut(colors, func(x, y color.RGBA) int { return int(x.G) - int(y.G) }, rand)
+	} else {
+		i = quickCut(colors, func(x, y color.RGBA) int { return int(x.B) - int(y.B) }, rand)
+	}
+	return [...][]color.RGBA{colors[:i], colors[i:]}
 }
 
 func colorAvg(colors []color.RGBA) sixelRGB {
@@ -85,18 +139,21 @@ func medianCut(img image.Image) color.Palette {
 		}
 	}
 	buckets := [][]color.RGBA{colors}
+	bucketRanges := []int32{-1}
+	randState := rand.Uint64()
 	for len(buckets) < 255 {
 		var bestRange uint8
 		var bestIdx int
 		for i, b := range buckets {
-			r := max(bucketRange(b))
+			r := max(bucketRange(b, i, bucketRanges))
 			if r >= bestRange {
 				bestRange = r
 				bestIdx = i
 			}
 		}
-		split := cutOnce(buckets[bestIdx])
+		split := cutOnce(buckets[bestIdx], bestIdx, bucketRanges, &randState)
 		buckets = slices.Replace(buckets, bestIdx, bestIdx+1, split[:]...)
+		bucketRanges = slices.Replace(bucketRanges, bestIdx, bestIdx+1, -1, -1)
 	}
 	var paletteRGB []sixelRGB
 	for _, bucket := range buckets {
@@ -105,7 +162,13 @@ func medianCut(img image.Image) color.Palette {
 		}
 	}
 	slices.SortFunc(paletteRGB, func(x, y sixelRGB) int {
-		return cmp.Or(cmp.Compare(x.r, y.r), cmp.Compare(x.g, y.g), cmp.Compare(x.b, y.b))
+		if n := int(x.r) - int(y.r); n != 0 {
+			return n
+		}
+		if n := int(x.g) - int(y.g); n != 0 {
+			return n
+		}
+		return int(x.b) - int(y.b)
 	})
 	paletteRGB = slices.Compact(paletteRGB)
 	palette := slices.Grow(color.Palette{color.Transparent}, len(paletteRGB))
@@ -138,13 +201,14 @@ func Print(w io.Writer, img image.Image) error {
 			}
 		}
 		colors := make(map[uint8]bool)
-		for y := y0; y <= y0+6; y++ {
+		for y := y0; y < y0+6; y++ {
 			for x := palettized.Bounds().Min.X; x < palettized.Bounds().Max.X; x++ {
 				if c := palettized.ColorIndexAt(x, y); c != 0 {
 					colors[c] = true
 				}
 			}
 		}
+
 		for i, c := range slices.Sorted(maps.Keys(colors)) {
 			if i > 0 {
 				if _, err := bw.WriteString("$"); err != nil {
