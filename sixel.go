@@ -81,14 +81,16 @@ func avgPaletteRGB(buckets [][]color.RGBA) []sixelRGB {
 }
 
 func medianCut(img image.Image) color.Palette {
-	colors := make([]color.RGBA, 0, img.Bounds().Dx()*img.Bounds().Dy())
+	var colors []color.RGBA
 	for y := img.Bounds().Min.Y; y < img.Bounds().Max.Y; y++ {
 		for x := img.Bounds().Min.X; x < img.Bounds().Max.X; x++ {
 			r, g, b, a := img.At(x, y).RGBA()
-			colors = append(colors, color.RGBA{R: uint8(r >> 8), G: uint8(g >> 8), B: uint8(b >> 8), A: uint8(a >> 8)})
+			if a > 0 {
+				colors = append(colors, color.RGBA{R: uint8(r >> 8), G: uint8(g >> 8), B: uint8(b >> 8), A: 0xff})
+			}
 		}
 	}
-	buckets := slices.DeleteFunc(cutDepth(colors, 0), func(c []color.RGBA) bool { return len(c) == 0 })
+	buckets := slices.DeleteFunc(cutDepth(colors, 0), func(b []color.RGBA) bool { return len(b) == 0 })
 	paletteRGB := avgPaletteRGB(buckets)
 	if len(paletteRGB) == 256 {
 		lastBucket := buckets[len(buckets)-1]
