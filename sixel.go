@@ -58,28 +58,22 @@ func partition(a []color.RGBA, lo, hi, pivotIndex int, cmp func(color.RGBA, colo
 	return lt, gt
 }
 
-func quickSelect(list []color.RGBA, k int, cmp func(color.RGBA, color.RGBA) int, randState *uint64) int {
+func quickSelect(list []color.RGBA, k int, cmp func(color.RGBA, color.RGBA) int, randState *uint64) {
 	left, right := 0, len(list)-1
 	for {
 		if left == right {
-			return left
+			return
 		}
 		pivotIndex := left + lcg(randState)%(right-left+1)
 		pivotLeft, pivotRight := partition(list, left, right, pivotIndex, cmp)
 		if pivotLeft <= k && k <= pivotRight {
-			return k
+			return
 		} else if k < pivotLeft {
 			right = pivotLeft - 1
 		} else {
 			left = pivotRight + 1
 		}
 	}
-}
-
-func quickCut(list []color.RGBA, cmp func(color.RGBA, color.RGBA) int, rand *uint64) int {
-	medianIndex := quickSelect(list, len(list)/2, cmp, rand)
-	partition(list, 0, len(list)-1, medianIndex, cmp)
-	return len(list) / 2
 }
 
 func bucketRange(colors []color.RGBA, bucketIdx int, rangeCache []int32) (rRange, gRange, bRange uint8) {
@@ -106,15 +100,14 @@ func cutOnce(colors []color.RGBA, bucketIdx int, rangeCache []int32, rand *uint6
 		return [...][]color.RGBA{colors, colors}
 	}
 	rRange, gRange, bRange := bucketRange(colors, bucketIdx, rangeCache)
-	var i int
 	if rRange >= gRange && rRange >= bRange {
-		i = quickCut(colors, func(x, y color.RGBA) int { return int(x.R) - int(y.R) }, rand)
+		quickSelect(colors, len(colors)/2, func(x, y color.RGBA) int { return int(x.R) - int(y.R) }, rand)
 	} else if gRange >= rRange && gRange >= bRange {
-		i = quickCut(colors, func(x, y color.RGBA) int { return int(x.G) - int(y.G) }, rand)
+		quickSelect(colors, len(colors)/2, func(x, y color.RGBA) int { return int(x.G) - int(y.G) }, rand)
 	} else {
-		i = quickCut(colors, func(x, y color.RGBA) int { return int(x.B) - int(y.B) }, rand)
+		quickSelect(colors, len(colors)/2, func(x, y color.RGBA) int { return int(x.B) - int(y.B) }, rand)
 	}
-	return [...][]color.RGBA{colors[:i], colors[i:]}
+	return [...][]color.RGBA{colors[:len(colors)/2], colors[len(colors)/2:]}
 }
 
 func colorAvg(colors []color.RGBA) sixelRGB {
