@@ -37,7 +37,7 @@ func lcg(state *uint64) int {
 	return int(s >> 33)
 }
 
-func partition(a []color.RGBA, lo, hi, pivotIndex int, cmp func(color.RGBA, color.RGBA) int) (int, int) {
+func partition[S ~[]E, E any](a S, lo, hi, pivotIndex int, cmp func(E, E) int) (int, int) {
 	pivot := a[pivotIndex]
 	lt := lo
 	eq := lo
@@ -58,7 +58,7 @@ func partition(a []color.RGBA, lo, hi, pivotIndex int, cmp func(color.RGBA, colo
 	return lt, gt
 }
 
-func quickSelect(list []color.RGBA, k int, cmp func(color.RGBA, color.RGBA) int, randState *uint64) {
+func quickSelect[S ~[]E, E any](list S, k int, cmp func(E, E) int, randState *uint64) {
 	left, right := 0, len(list)-1
 	for {
 		if left == right {
