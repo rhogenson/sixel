@@ -31,25 +31,20 @@ func (c sixelRGB) RGBA() (r, g, b, a uint32) {
 	return scaleFFFF(c.r), scaleFFFF(c.g), scaleFFFF(c.b), 0xffff
 }
 
-func partition[S ~[]E, E any](a S, lo, hi, pivotIndex int, cmp func(E, E) int) (int, int) {
+func partition[S ~[]E, E any](a S, i, j, pivotIndex int, cmp func(E, E) int) int {
 	pivot := a[pivotIndex]
-	lt := lo
-	eq := lo
-	gt := hi
-	for eq <= gt {
-		n := cmp(a[eq], pivot)
-		if n < 0 {
-			a[eq], a[lt] = a[lt], a[eq]
-			lt++
-			eq++
-		} else if n > 0 {
-			a[eq], a[gt] = a[gt], a[eq]
-			gt--
-		} else {
-			eq++
+	for {
+		for ; cmp(a[i], pivot) < 0; i++ {
 		}
+		for ; cmp(a[j], pivot) > 0; j-- {
+		}
+		if i >= j {
+			return j
+		}
+		a[i], a[j] = a[j], a[i]
+		i++
+		j--
 	}
-	return lt, gt
 }
 
 func quickSelect[S ~[]E, E any](list S, k int, cmp func(E, E) int) {
@@ -59,13 +54,11 @@ func quickSelect[S ~[]E, E any](list S, k int, cmp func(E, E) int) {
 			return
 		}
 		pivotIndex := left + rand.IntN(right-left+1)
-		pivotLeft, pivotRight := partition(list, left, right, pivotIndex, cmp)
-		if pivotLeft <= k && k <= pivotRight {
-			return
-		} else if k < pivotLeft {
-			right = pivotLeft - 1
+		pivotIndex = partition(list, left, right, pivotIndex, cmp)
+		if k <= pivotIndex {
+			right = pivotIndex
 		} else {
-			left = pivotRight + 1
+			left = pivotIndex + 1
 		}
 	}
 }
