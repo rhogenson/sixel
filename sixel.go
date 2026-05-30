@@ -76,12 +76,9 @@ func quickSelect(list []color.RGBA, k int, cmp func(color.RGBA, color.RGBA) int,
 	}
 }
 
-func bucketRange(colors []color.RGBA, bucketIdx int, rangeCache []int32) (rRange, gRange, bRange uint8) {
+func bucketRange(colors []color.RGBA) color.RGBA {
 	if len(colors) == 0 {
-		return 0, 0, 0
-	}
-	if cached := rangeCache[bucketIdx]; cached >= 0 {
-		return uint8(cached >> 16), uint8(cached >> 8), uint8(cached)
+		return color.RGBA{}
 	}
 	var minR, minG, minB uint8 = math.MaxUint8, math.MaxUint8, math.MaxUint8
 	var maxR, maxG, maxB uint8
@@ -90,16 +87,14 @@ func bucketRange(colors []color.RGBA, bucketIdx int, rangeCache []int32) (rRange
 		minG, maxG = min(minG, c.G), max(maxG, c.G)
 		minB, maxB = min(minB, c.B), max(maxB, c.B)
 	}
-	rRange, gRange, bRange = maxR-minR, maxG-minG, maxB-minB
-	rangeCache[bucketIdx] = int32(rRange)<<16 | int32(gRange)<<8 | int32(bRange)
-	return rRange, gRange, bRange
+	return color.RGBA{R: maxR - minR, G: maxG - minG, B: maxB - minB}
 }
 
-func cutOnce(colors []color.RGBA, bucketIdx int, rangeCache []int32, rand *uint64) [2][]color.RGBA {
+func cutOnce(colors []color.RGBA, bucketRange color.RGBA, rand *uint64) [2][]color.RGBA {
 	if len(colors) == 0 {
 		return [...][]color.RGBA{colors, colors}
 	}
-	rRange, gRange, bRange := bucketRange(colors, bucketIdx, rangeCache)
+	rRange, gRange, bRange := bucketRange.R, bucketRange.G, bucketRange.B
 	if rRange >= gRange && rRange >= bRange {
 		quickSelect(colors, len(colors)/2, func(x, y color.RGBA) int { return int(x.R) - int(y.R) }, rand)
 	} else if gRange >= rRange && gRange >= bRange {
@@ -132,21 +127,24 @@ func medianCut(img image.Image) color.Palette {
 		}
 	}
 	buckets := [][]color.RGBA{colors}
-	bucketRanges := []int32{-1}
+	bucketRanges := []color.RGBA{{}}
 	randState := rand.Uint64()
-	for len(buckets) < 255 {
+	for {
 		var bestRange uint8
 		var bestIdx int
-		for i, b := range buckets {
-			r := max(bucketRange(b, i, bucketRanges))
+		for i, rng := range bucketRanges {
+			r := max(rng.R, rng.G, rng.B)
 			if r >= bestRange {
 				bestRange = r
 				bestIdx = i
 			}
 		}
-		split := cutOnce(buckets[bestIdx], bestIdx, bucketRanges, &randState)
+		split := cutOnce(buckets[bestIdx], bucketRanges[bestIdx], &randState)
 		buckets = slices.Replace(buckets, bestIdx, bestIdx+1, split[:]...)
-		bucketRanges = slices.Replace(bucketRanges, bestIdx, bestIdx+1, -1, -1)
+		if len(buckets) == 255 {
+			break
+		}
+		bucketRanges = slices.Replace(bucketRanges, bestIdx, bestIdx+1, bucketRange(split[0]), bucketRange(split[1]))
 	}
 	var paletteRGB []sixelRGB
 	for _, bucket := range buckets {
