@@ -7,164 +7,65 @@ import (
 	"fmt"
 	"image"
 	"image/color"
+	"image/color/palette"
 	"image/draw"
 	"io"
-	"maps"
-	"math"
-	"math/rand/v2"
 	"slices"
 )
-
-func scale100(c int64) int8 {
-	return int8(c * 100 / 0xff)
-}
-
-func scaleFFFF(c int8) uint32 {
-	return uint32(c) * 0xffff / 100
-}
 
 type sixelRGB struct {
 	r, g, b int8
 }
 
 func (c sixelRGB) RGBA() (r, g, b, a uint32) {
-	return scaleFFFF(c.r), scaleFFFF(c.g), scaleFFFF(c.b), 0xffff
+	return uint32(c.r) * 0xffff / 100, uint32(c.g) * 0xffff / 100, uint32(c.b) * 0xffff / 100, 0xffff
 }
 
-func partition[S ~[]E, E any](a S, i, j, pivotIndex int, cmp func(E, E) int) int {
-	pivot := a[pivotIndex]
-	for {
-		for ; cmp(a[i], pivot) < 0; i++ {
-		}
-		for ; cmp(a[j], pivot) > 0; j-- {
-		}
-		if i >= j {
-			return j
-		}
-		a[i], a[j] = a[j], a[i]
-		i++
-		j--
+var defaultSixelPalette color.Palette
+
+func init() {
+	defaultSixelPalette = slices.Grow(color.Palette{color.Transparent}, len(palette.WebSafe))
+	for _, c := range palette.WebSafe {
+		r, g, b, _ := c.RGBA()
+		defaultSixelPalette = append(defaultSixelPalette, sixelRGB{int8(r * 100 / 0xffff), int8(g * 100 / 0xffff), int8(b * 100 / 0xffff)})
 	}
 }
 
-func quickSelect[S ~[]E, E any](list S, k int, cmp func(E, E) int) {
-	left, right := 0, len(list)-1
-	for {
-		if left == right {
-			return
+func sixelizePalette(p color.Palette) color.Palette {
+	var result color.Palette
+	includeTransparent := false
+	for _, c := range p {
+		r, g, b, a := c.RGBA()
+		if a == 0 {
+			includeTransparent = true
+			continue
 		}
-		pivotIndex := left + rand.IntN(right-left+1)
-		pivotIndex = partition(list, left, right, pivotIndex, cmp)
-		if k <= pivotIndex {
-			right = pivotIndex
-		} else {
-			left = pivotIndex + 1
-		}
+		result = append(result, sixelRGB{r: int8(r * 100 / 0xffff), g: int8(g * 100 / 0xffff), b: int8(b * 100 / 0xffff)})
 	}
+	if includeTransparent {
+		result = append(color.Palette{color.Transparent}, result...)
+	}
+	return result
 }
 
-func bucketRange(colors []color.RGBA) color.RGBA {
-	if len(colors) == 0 {
-		return color.RGBA{}
-	}
-	var minR, minG, minB uint8 = math.MaxUint8, math.MaxUint8, math.MaxUint8
-	var maxR, maxG, maxB uint8
-	for _, c := range colors {
-		minR, maxR = min(minR, c.R), max(maxR, c.R)
-		minG, maxG = min(minG, c.G), max(maxG, c.G)
-		minB, maxB = min(minB, c.B), max(maxB, c.B)
-	}
-	return color.RGBA{R: maxR - minR, G: maxG - minG, B: maxB - minB}
-}
-
-func cutOnce(colors []color.RGBA, bucketRange color.RGBA) [2][]color.RGBA {
-	if len(colors) == 0 {
-		return [...][]color.RGBA{colors, colors}
-	}
-	rRange, gRange, bRange := bucketRange.R, bucketRange.G, bucketRange.B
-	if rRange >= gRange && rRange >= bRange {
-		quickSelect(colors, len(colors)/2, func(x, y color.RGBA) int { return int(x.R) - int(y.R) })
-	} else if gRange >= rRange && gRange >= bRange {
-		quickSelect(colors, len(colors)/2, func(x, y color.RGBA) int { return int(x.G) - int(y.G) })
+// Print renders the given image as a sixel. The given palette will be used if
+// provided, otherwise a default palette will be selected.
+func Print(w io.Writer, img image.Image, p color.Palette) error {
+	if len(p) == 0 {
+		p = defaultSixelPalette
 	} else {
-		quickSelect(colors, len(colors)/2, func(x, y color.RGBA) int { return int(x.B) - int(y.B) })
+		p = sixelizePalette(p)
 	}
-	return [...][]color.RGBA{colors[:len(colors)/2], colors[len(colors)/2:]}
-}
-
-func colorAvg(colors []color.RGBA) sixelRGB {
-	var r, g, b int64
-	for _, c := range colors {
-		r += int64(c.R)
-		g += int64(c.G)
-		b += int64(c.B)
-	}
-	n := int64(len(colors))
-	return sixelRGB{r: scale100(r / n), g: scale100(g / n), b: scale100(b / n)}
-}
-
-func medianCut(img image.Image) color.Palette {
-	var colors []color.RGBA
-	for y := img.Bounds().Min.Y; y < img.Bounds().Max.Y; y++ {
-		for x := img.Bounds().Min.X; x < img.Bounds().Max.X; x++ {
-			r, g, b, a := img.At(x, y).RGBA()
-			if a > 0 {
-				colors = append(colors, color.RGBA{R: uint8(r >> 8), G: uint8(g >> 8), B: uint8(b >> 8), A: 0xff})
-			}
-		}
-	}
-	buckets := [][]color.RGBA{colors}
-	bucketRanges := []color.RGBA{{}}
-	for {
-		var bestRange uint8
-		var bestIdx int
-		for i, rng := range bucketRanges {
-			r := max(rng.R, rng.G, rng.B)
-			if r >= bestRange {
-				bestRange = r
-				bestIdx = i
-			}
-		}
-		split := cutOnce(buckets[bestIdx], bucketRanges[bestIdx])
-		buckets = slices.Replace(buckets, bestIdx, bestIdx+1, split[:]...)
-		if len(buckets) == 255 {
-			break
-		}
-		bucketRanges = slices.Replace(bucketRanges, bestIdx, bestIdx+1, bucketRange(split[0]), bucketRange(split[1]))
-	}
-	var paletteRGB []sixelRGB
-	for _, bucket := range buckets {
-		if len(bucket) > 0 {
-			paletteRGB = append(paletteRGB, colorAvg(bucket))
-		}
-	}
-	slices.SortFunc(paletteRGB, func(x, y sixelRGB) int {
-		if n := int(x.r) - int(y.r); n != 0 {
-			return n
-		}
-		if n := int(x.g) - int(y.g); n != 0 {
-			return n
-		}
-		return int(x.b) - int(y.b)
-	})
-	paletteRGB = slices.Compact(paletteRGB)
-	palette := slices.Grow(color.Palette{color.Transparent}, len(paletteRGB))
-	for _, c := range paletteRGB {
-		palette = append(palette, c)
-	}
-	return palette
-}
-
-// Print renders the given image as a sixel.
-func Print(w io.Writer, img image.Image) error {
-	palette := medianCut(img)
-	palettized := image.NewPaletted(img.Bounds(), palette)
+	palettized := image.NewPaletted(img.Bounds(), p)
 	draw.FloydSteinberg.Draw(palettized, palettized.Bounds(), img, image.Point{})
 	bw := bufio.NewWriter(w)
 	if _, err := bw.WriteString("\033P7;1q"); err != nil {
 		return err
 	}
-	for i, c := range palette[1:] {
+	for i, c := range palettized.ColorModel().(color.Palette) {
+		if c == color.Transparent {
+			continue
+		}
 		sc := c.(sixelRGB)
 		if _, err := fmt.Fprintf(bw, "#%d;2;%d;%d;%d", i, sc.r, sc.g, sc.b); err != nil {
 			return err
@@ -177,22 +78,29 @@ func Print(w io.Writer, img image.Image) error {
 				return err
 			}
 		}
-		colors := make(map[uint8]bool)
+		colors := make([]bool, 256)
 		for y := y0; y < y0+6; y++ {
 			for x := palettized.Bounds().Min.X; x < palettized.Bounds().Max.X; x++ {
-				if c := palettized.ColorIndexAt(x, y); c != 0 {
-					colors[c] = true
-				}
+				colors[palettized.ColorIndexAt(x, y)] = true
 			}
 		}
+		if p[0] == color.Transparent {
+			colors[0] = false
+		}
 
-		for i, c := range slices.Sorted(maps.Keys(colors)) {
-			if i > 0 {
+		first := true
+		for ci, present := range colors {
+			c := uint8(ci)
+			if !present {
+				continue
+			}
+			if !first {
 				if _, err := bw.WriteString("$"); err != nil {
 					return err
 				}
 			}
-			if _, err := fmt.Fprintf(bw, "#%d", c-1); err != nil {
+			first = false
+			if _, err := fmt.Fprintf(bw, "#%d", c); err != nil {
 				return err
 			}
 			var (
