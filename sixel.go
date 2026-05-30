@@ -59,7 +59,7 @@ func Print(w io.Writer, img image.Image, p color.Palette) error {
 	palettized := image.NewPaletted(img.Bounds(), p)
 	draw.FloydSteinberg.Draw(palettized, palettized.Bounds(), img, image.Point{})
 	bw := bufio.NewWriter(w)
-	if _, err := bw.WriteString("\033P7;1q"); err != nil {
+	if _, err := fmt.Fprintf(bw, "\033P;1q\"1;1;%d;%d", palettized.Bounds().Dx(), palettized.Bounds().Dy()); err != nil {
 		return err
 	}
 	for i, c := range palettized.ColorModel().(color.Palette) {
