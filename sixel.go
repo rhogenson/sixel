@@ -31,12 +31,6 @@ func (c sixelRGB) RGBA() (r, g, b, a uint32) {
 	return scaleFFFF(c.r), scaleFFFF(c.g), scaleFFFF(c.b), 0xffff
 }
 
-func lcg(state *uint64) int {
-	s := *state*6364136223846793005 + 1
-	*state = s
-	return int(s >> 33)
-}
-
 func partition[S ~[]E, E any](a S, lo, hi, pivotIndex int, cmp func(E, E) int) (int, int) {
 	pivot := a[pivotIndex]
 	lt := lo
@@ -58,13 +52,13 @@ func partition[S ~[]E, E any](a S, lo, hi, pivotIndex int, cmp func(E, E) int) (
 	return lt, gt
 }
 
-func quickSelect[S ~[]E, E any](list S, k int, cmp func(E, E) int, randState *uint64) {
+func quickSelect[S ~[]E, E any](list S, k int, cmp func(E, E) int) {
 	left, right := 0, len(list)-1
 	for {
 		if left == right {
 			return
 		}
-		pivotIndex := left + lcg(randState)%(right-left+1)
+		pivotIndex := left + rand.IntN(right-left+1)
 		pivotLeft, pivotRight := partition(list, left, right, pivotIndex, cmp)
 		if pivotLeft <= k && k <= pivotRight {
 			return
@@ -90,17 +84,17 @@ func bucketRange(colors []color.RGBA) color.RGBA {
 	return color.RGBA{R: maxR - minR, G: maxG - minG, B: maxB - minB}
 }
 
-func cutOnce(colors []color.RGBA, bucketRange color.RGBA, rand *uint64) [2][]color.RGBA {
+func cutOnce(colors []color.RGBA, bucketRange color.RGBA) [2][]color.RGBA {
 	if len(colors) == 0 {
 		return [...][]color.RGBA{colors, colors}
 	}
 	rRange, gRange, bRange := bucketRange.R, bucketRange.G, bucketRange.B
 	if rRange >= gRange && rRange >= bRange {
-		quickSelect(colors, len(colors)/2, func(x, y color.RGBA) int { return int(x.R) - int(y.R) }, rand)
+		quickSelect(colors, len(colors)/2, func(x, y color.RGBA) int { return int(x.R) - int(y.R) })
 	} else if gRange >= rRange && gRange >= bRange {
-		quickSelect(colors, len(colors)/2, func(x, y color.RGBA) int { return int(x.G) - int(y.G) }, rand)
+		quickSelect(colors, len(colors)/2, func(x, y color.RGBA) int { return int(x.G) - int(y.G) })
 	} else {
-		quickSelect(colors, len(colors)/2, func(x, y color.RGBA) int { return int(x.B) - int(y.B) }, rand)
+		quickSelect(colors, len(colors)/2, func(x, y color.RGBA) int { return int(x.B) - int(y.B) })
 	}
 	return [...][]color.RGBA{colors[:len(colors)/2], colors[len(colors)/2:]}
 }
@@ -128,7 +122,6 @@ func medianCut(img image.Image) color.Palette {
 	}
 	buckets := [][]color.RGBA{colors}
 	bucketRanges := []color.RGBA{{}}
-	randState := rand.Uint64()
 	for {
 		var bestRange uint8
 		var bestIdx int
@@ -139,7 +132,7 @@ func medianCut(img image.Image) color.Palette {
 				bestIdx = i
 			}
 		}
-		split := cutOnce(buckets[bestIdx], bucketRanges[bestIdx], &randState)
+		split := cutOnce(buckets[bestIdx], bucketRanges[bestIdx])
 		buckets = slices.Replace(buckets, bestIdx, bestIdx+1, split[:]...)
 		if len(buckets) == 255 {
 			break

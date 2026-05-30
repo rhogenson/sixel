@@ -17,7 +17,6 @@ func BenchmarkQuickSelect(b *testing.B) {
 		b.StopTimer()
 		copy(myTestSlice, testSlice)
 		b.StartTimer()
-		var randState uint64
-		quickSelect(myTestSlice, len(myTestSlice)/2, cmp.Compare, &randState)
+		quickSelect(myTestSlice, len(myTestSlice)/2, cmp.Compare)
 	}
 }
