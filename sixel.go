@@ -13,16 +13,12 @@ import (
 	"slices"
 )
 
-func divRound(n, d uint32) uint32 {
-	return (n + d/2) / d
-}
-
 type sixelRGB struct {
 	r, g, b int8
 }
 
 func (c sixelRGB) RGBA() (r, g, b, a uint32) {
-	return divRound(uint32(c.r)*0xffff, 100), divRound(uint32(c.g)*0xffff, 100), divRound(uint32(c.b)*0xffff, 100), 0xffff
+	return uint32(c.r) * 0xffff / 100, uint32(c.g) * 0xffff / 100, uint32(c.b) * 0xffff / 100, 0xffff
 }
 
 var defaultSixelPalette color.Palette
@@ -31,7 +27,7 @@ func init() {
 	defaultSixelPalette = slices.Grow(color.Palette{color.Transparent}, len(palette.WebSafe))
 	for _, c := range palette.WebSafe {
 		r, g, b, _ := c.RGBA()
-		defaultSixelPalette = append(defaultSixelPalette, sixelRGB{int8(divRound(r*100, 0xffff)), int8(divRound(g*100, 0xffff)), int8(divRound(b*100, 0xffff))})
+		defaultSixelPalette = append(defaultSixelPalette, sixelRGB{int8(r * 100 / 0xffff), int8(g * 100 / 0xffff), int8(b * 100 / 0xffff)})
 	}
 }
 
@@ -44,7 +40,7 @@ func sixelizePalette(p color.Palette) color.Palette {
 			includeTransparent = true
 			continue
 		}
-		result = append(result, sixelRGB{r: int8(divRound(r*100, 0xffff)), g: int8(divRound(g*100, 0xffff)), b: int8(divRound(b*100, 0xffff))})
+		result = append(result, sixelRGB{r: int8(r * 100 / 0xffff), g: int8(g * 100 / 0xffff), b: int8(b * 100 / 0xffff)})
 	}
 	if includeTransparent {
 		result = append(color.Palette{color.Transparent}, result...)
@@ -186,14 +182,14 @@ func PrintBlock(w io.Writer, img image.Image) error {
 					}
 				} else {
 					r, g, b, _ := img.At(x, y+1).RGBA()
-					if _, err := fmt.Fprintf(bw, "\033[38;2;%d;%d;%dm\033[49m▄", divRound(r, 1<<8), divRound(g, 1<<8), divRound(b, 1<<8)); err != nil {
+					if _, err := fmt.Fprintf(bw, "\033[38;2;%d;%d;%dm\033[49m▄", r>>8, g>>8, b>>8); err != nil {
 						return err
 					}
 				}
 			} else {
 				if y+1 < img.Bounds().Max.Y && !isFullyTransparent(img.At(x, y+1)) {
 					r, g, b, _ := img.At(x, y+1).RGBA()
-					if _, err := fmt.Fprintf(bw, "\033[48;2;%d;%d;%dm", divRound(r, 1<<8), divRound(g, 1<<8), divRound(b, 1<<8)); err != nil {
+					if _, err := fmt.Fprintf(bw, "\033[48;2;%d;%d;%dm", r>>8, g>>8, b>>8); err != nil {
 						return err
 					}
 				} else {
@@ -202,7 +198,7 @@ func PrintBlock(w io.Writer, img image.Image) error {
 					}
 				}
 				r, g, b, _ := hi.RGBA()
-				if _, err := fmt.Fprintf(bw, "\033[38;2;%d;%d;%dm▀", divRound(r, 1<<8), divRound(g, 1<<8), divRound(b, 1<<8)); err != nil {
+				if _, err := fmt.Fprintf(bw, "\033[38;2;%d;%d;%dm▀", r>>8, g>>8, b>>8); err != nil {
 					return err
 				}
 			}
