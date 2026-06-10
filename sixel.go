@@ -13,12 +13,16 @@ import (
 	"slices"
 )
 
+func divRound(n, d uint32) uint32 {
+	return (n + d/2) / d
+}
+
 type sixelRGB struct {
 	r, g, b int8
 }
 
 func (c sixelRGB) RGBA() (r, g, b, a uint32) {
-	return uint32(c.r) * 0xffff / 100, uint32(c.g) * 0xffff / 100, uint32(c.b) * 0xffff / 100, 0xffff
+	return divRound(uint32(c.r)*0xffff, 100), divRound(uint32(c.g)*0xffff, 100), divRound(uint32(c.b)*0xffff, 100), 0xffff
 }
 
 var defaultSixelPalette color.Palette
@@ -27,7 +31,7 @@ func init() {
 	defaultSixelPalette = slices.Grow(color.Palette{color.Transparent}, len(palette.WebSafe))
 	for _, c := range palette.WebSafe {
 		r, g, b, _ := c.RGBA()
-		defaultSixelPalette = append(defaultSixelPalette, sixelRGB{int8(r * 100 / 0xffff), int8(g * 100 / 0xffff), int8(b * 100 / 0xffff)})
+		defaultSixelPalette = append(defaultSixelPalette, sixelRGB{int8(divRound(r*100, 0xffff)), int8(divRound(g*100, 0xffff)), int8(divRound(b*100, 0xffff))})
 	}
 }
 
@@ -40,7 +44,7 @@ func sixelizePalette(p color.Palette) color.Palette {
 			includeTransparent = true
 			continue
 		}
-		result = append(result, sixelRGB{r: int8(r * 100 / 0xffff), g: int8(g * 100 / 0xffff), b: int8(b * 100 / 0xffff)})
+		result = append(result, sixelRGB{r: int8(divRound(r*100, 0xffff)), g: int8(divRound(g*100, 0xffff)), b: int8(divRound(b*100, 0xffff))})
 	}
 	if includeTransparent {
 		result = append(color.Palette{color.Transparent}, result...)
