@@ -79,7 +79,7 @@ func Print(w io.Writer, img image.Image, p color.Palette) error {
 			}
 		}
 		colors := make([]bool, 256)
-		for y := y0; y < y0+6; y++ {
+		for y := y0; y < min(y0+6, palettized.Bounds().Max.Y); y++ {
 			for x := palettized.Bounds().Min.X; x < palettized.Bounds().Max.X; x++ {
 				colors[palettized.ColorIndexAt(x, y)] = true
 			}
@@ -109,10 +109,9 @@ func Print(w io.Writer, img image.Image, p color.Palette) error {
 			)
 			for x := palettized.Bounds().Min.X; x < palettized.Bounds().Max.X; x++ {
 				var char byte
-				for j := range 6 {
-					y := y0 + j
+				for y := y0; y < min(y0+6, palettized.Bounds().Max.Y); y++ {
 					if palettized.ColorIndexAt(x, y) == c {
-						char |= 1 << j
+						char |= 1 << (y - y0)
 					}
 				}
 				char += '?'
